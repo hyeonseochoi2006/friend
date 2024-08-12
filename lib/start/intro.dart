@@ -22,6 +22,7 @@ class _IntroSystemState extends State<IntroSystem> with SingleTickerProviderStat
   final AudioPlayer _audioPlayer = AudioPlayer();
   final AudioPlayer _textfinalsound = AudioPlayer();
   final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
+   final AudioPlayer _backgroundMusicPlayer = AudioPlayer();
 
   String _displayText = '';
   double _opacity = 0.0;
@@ -36,9 +37,12 @@ class _IntroSystemState extends State<IntroSystem> with SingleTickerProviderStat
 
   @override
   void initState() {
+    _playBackgroundMusic();
+ 
     super.initState();
     _initializeRecorder();
     _speakWelcomeMessage();
+ 
 
     _controller = AnimationController(
       duration: const Duration(seconds: 2),
@@ -50,6 +54,7 @@ class _IntroSystemState extends State<IntroSystem> with SingleTickerProviderStat
 
   @override
   void dispose() {
+    _backgroundMusicPlayer.stop();
     _audioPlayer.stop();
     _recorder.closeRecorder();
     _textfinalsound.dispose();
@@ -71,9 +76,19 @@ class _IntroSystemState extends State<IntroSystem> with SingleTickerProviderStat
       print("Error opening recorder: $e");
     }
   }
-
+  Future<void> _playBackgroundMusic() async {
+    await _backgroundMusicPlayer.setReleaseMode(ReleaseMode.loop);
+    // await _backgroundMusicPlayer.setVolume(0.2);
+    await _backgroundMusicPlayer.play(AssetSource('intromusic.mp3'));
+  }
+  
   Future<void> _speakWelcomeMessage() async {
-    await _showTextAndSpeak("If you're done, please say ok", 2);//추가설명 작성해야됍니다
+    await _showTextAndSpeak("HI", 2);
+    await _showTextAndSpeak("Nice to meet you", 3);
+    await _showTextAndSpeak("My name is Gemini", 3);
+    await _showTextAndSpeak("I want to be your friend!", 3);
+  
+    await _showTextAndSpeak("If you don't mind, please answer yes.", 2);
     bool recordingStarted = await _startRecording();
     if (!recordingStarted) {
       await _showTextAndSpeak("Recording failed. Please try again.", 3);
@@ -92,7 +107,8 @@ class _IntroSystemState extends State<IntroSystem> with SingleTickerProviderStat
     String? transcribedText = await _showTranscribingStar();
 
 
-    if (transcribedText!.toLowerCase().contains('ok') || transcribedText.toLowerCase().contains('okay')) {
+    if (transcribedText!.toLowerCase().contains('ok') || transcribedText.toLowerCase().contains('yes')) {
+      _backgroundMusicPlayer.stop();
       Navigator.push(
         context,
         MaterialPageRoute(builder: (context) => const SystemInitial()),
@@ -103,6 +119,7 @@ class _IntroSystemState extends State<IntroSystem> with SingleTickerProviderStat
   }
 
   Future<void> _recordingSection() async {
+    
     await _showTextAndSpeak("Please try again.", 3);
     bool recordingStarted = await _startRecording();
     if (!recordingStarted) {
@@ -139,7 +156,7 @@ class _IntroSystemState extends State<IntroSystem> with SingleTickerProviderStat
     _opacity = 1.0;
   });
   try {
-    await _googleTTS.speak(text, onComplete: onComplete); // onComplete 콜백 추가
+    await _googleTTS.speak(text, onComplete: onComplete); 
   } catch (e) {
     print("TTS failed: $e");
   }
@@ -223,6 +240,7 @@ class _IntroSystemState extends State<IntroSystem> with SingleTickerProviderStat
 
   @override
   Widget build(BuildContext context) {
+    
     return Scaffold(
       backgroundColor: const Color.fromARGB(243, 3, 1, 51),
       body: Stack(

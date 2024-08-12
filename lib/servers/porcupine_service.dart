@@ -9,8 +9,8 @@ class PorcupineService {
   PorcupineService(this._wakeWordCallback);
 
   Future<void> initialize() async {
-    String keywordPath = "assets/keywords/hi-gemini_en_android_v3_0_0.ppn";
-    String accessKey = dotenv.env['PORCUPINE_ACCESS_KEY']!;
+    String keywordPath = "assets/otherkeyword/Hi-Gemini_en_android_v3_0_0.ppn";
+    String accessKey = dotenv.env['PORCUPINE_ACCESS_KEY2']!;
 
     _porcupineManager = await PorcupineManager.fromKeywordPaths(
       accessKey,

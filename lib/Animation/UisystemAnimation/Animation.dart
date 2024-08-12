@@ -4,6 +4,7 @@ class UiSystemAnimations {
   late final AnimationController animationController;
   late final AnimationController fadeInController;
   late final AnimationController containerFadeInController;
+  late final AnimationController recordRotationController; // This should be an AnimationController
   
   late final Animation<double> opacityAnimation;
   late final Animation<double> jjjFadeInAnimation;
@@ -14,6 +15,7 @@ class UiSystemAnimations {
   late final Animation<double> gradientFadeOutAnimation;
   late final Animation<Offset> iconSlideAnimation;
   late final Animation<Offset> labelSlideAnimation;
+  late final Animation<double> recordRotationAnimation;
 
   UiSystemAnimations({required TickerProvider vsync}) {
     animationController = AnimationController(
@@ -29,6 +31,11 @@ class UiSystemAnimations {
     containerFadeInController = AnimationController(
       vsync: vsync,
       duration: const Duration(seconds: 1),
+    );
+
+    recordRotationController = AnimationController(
+      vsync: vsync,
+      duration: const Duration(seconds: 2), // Set the appropriate duration for rotation
     );
 
     opacityAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -93,11 +100,20 @@ class UiSystemAnimations {
         curve: const Interval(0.9, 1.0, curve: Curves.easeInOut),
       ),
     );
+
+    // Use the recordRotationController to create an animation
+    recordRotationAnimation = Tween<double>(begin: 0.0, end: 3.14 * 2).animate(
+      CurvedAnimation(
+        parent: recordRotationController,
+        curve: Curves.linear,
+      ),
+    );
   }
 
   void dispose() {
     animationController.dispose();
     fadeInController.dispose();
     containerFadeInController.dispose();
+    recordRotationController.dispose(); // Dispose the recordRotationController
   }
 }

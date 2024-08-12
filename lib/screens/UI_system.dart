@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:friend/Animation/systeminitial_sub/Systeminitial_ani.dart';
+import 'package:friend/servers/porcupine_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:friend/Animation/UisystemAnimation/Animation.dart';
 import 'package:friend/Animation/UisystemAnimation/shape.dart';
@@ -11,7 +13,10 @@ import 'package:friend/servers/Text_to_speech.dart';
 import 'package:friend/servers/map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:friend/servers/vision_api.dart';
-import 'package:flutter/services.dart'; // 추가된 import
+import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:friend/servers/speech_to_Text.dart'; 
+import 'package:flutter_sound/flutter_sound.dart';
 
 class UiSystem extends StatefulWidget {
   const UiSystem({super.key});
@@ -28,177 +33,203 @@ class _UiSystemtState extends State<UiSystem> with TickerProviderStateMixin {
 
   bool _isCameraInitialized = false;
   bool _showFullScreenCamera = false;
+  bool _isProcessing = false;
+  bool _isListening = false;
+  bool _isRecording = false;
+  bool _isPorcupineActive = true;
+  int _remainingTime = 10; // 타이머를 위한 변수 추가
 
-  // 손 위치 데이터에 대한 정보를 저장하는 변수
-  String _handData = "No hand detected"; // 초기값 설정
+  String _handData = "No hand detected";
+  String _geminiResponse = "";
+  int _retryCount = 0;
+  Timer? _wakeWordTimer;
+  Timer? _timer; // 타이머 변수 추가
 
-  // MethodChannel 설정
-  static const platform = MethodChannel('mediapipe/hand_tracking');
+  PorcupineService? _porcupineService;
+  final FlutterSoundRecorder _voiceRecorder = FlutterSoundRecorder();
+  final _googleSTT = GoogleSTT();
+  final _geminiApi = GeminiApi();
+  final _googleTTS = GoogleTTS();
 
   @override
   void initState() {
     super.initState();
+    _initializeCamera(); // Initialize the camera after animations
 
     animations = UiSystemAnimations(vsync: this);
-    _initializeCamera();
 
-    animations.animationController.addStatusListener((status) {
+    animations.animationController.addStatusListener((status) async {
       if (status == AnimationStatus.completed) {
         setState(() {
           _showFullScreenCamera = true;
           animations.fadeInController.forward();
-          Future.delayed(const Duration(seconds: 2), () {
-            animations.containerFadeInController.forward();
+          Future.delayed(const Duration(seconds: 2), () async {
+            await animations.containerFadeInController.forward();
+            await _initializePorcupine(); // Initialize Porcupine after animations
           });
-        });
-
-        // Mediapipe 손 추적 시작
-        _startHandTracking();
-
-        // 카메라 분석을 일정 간격으로 실행
-        Timer.periodic(const Duration(seconds: 5), (timer) {
-          _analyzeCameraFeed();
         });
       }
     });
 
-    _getLocationAndMapUrl();  // 위치와 지도를 불러옵니다.
+    _startInitialAnimation(); // Start the initial animation
   }
 
-  // Mediapipe 손 추적을 시작하는 메서드
-  Future<void> _startHandTracking() async {
-    try {
-      platform.setMethodCallHandler((MethodCall call) async {
-        if (call.method == 'onHandDetected') {
-          final handPosition = call.arguments;
-          _processHandPosition(handPosition);
+  Future<void> _startInitialAnimation() async {
+    animations.animationController.forward();
+  }
+
+  Future<void> _initializePorcupine() async {
+    _porcupineService = PorcupineService(_wakeWordCallback);
+    await _porcupineService?.initialize();
+    
+  }
+
+  void _wakeWordCallback(int keywordIndex) {
+  if (keywordIndex == 0) {
+    _porcupineService?.stop();
+    _startListening(); // 바로 녹음 시작
+    
+  }
+}
+
+// 타이머 제거
+void _startWakeWordTimer() {
+  _wakeWordTimer?.cancel(); // 기존 타이머가 있을 경우 취소
+  // 더 이상 타이머를 사용하지 않으므로 빈 메서드로 유지
+}
+
+  Future<void> _startListening() async {
+    if (_voiceRecorder.isRecording) {
+      print('Recorder is already running');
+      return;
+    }
+
+    await _voiceRecorder.openRecorder();
+    setState(() {
+      _isListening = true;
+      _startCountdown(); // 타이머 시작
+      animations.recordRotationController.repeat(); // Start icon rotation
+    });
+
+    final directory = await getApplicationDocumentsDirectory();
+    final path = '${directory.path}/friend_audio.wav';
+
+    await _voiceRecorder.startRecorder(
+      toFile: path,
+      codec: Codec.pcm16WAV,
+    );
+
+    _isRecording = true;
+
+    // Stop recording after 10 seconds and start processing
+    await Future.delayed(const Duration(seconds: 10));
+    await stopRecording();
+  }
+
+  void _startCountdown() {
+    _timer?.cancel();
+    setState(() {
+      _remainingTime = 10; // 타이머 초기화
+    });
+
+    _timer = Timer.periodic(Duration(seconds: 1), (timer) {
+      setState(() {
+        if (_remainingTime > 0) {
+          _remainingTime--;
+        } else {
+          _timer?.cancel();
         }
       });
-    } on PlatformException catch (e) {
-      print("Failed to start hand tracking: '${e.message}'.");
-    }
+    });
   }
 
-  // 손 위치 데이터를 처리하는 메서드
-  void _processHandPosition(dynamic handPosition) {
-    // 손의 위치 데이터 처리
-    List<dynamic> landmarks = handPosition['landmarks'];
+  Future<void> stopRecording() async {
+    if (!_isRecording) return;
 
-    // 예: 첫 번째 손가락 끝 좌표 가져오기
-    double x = landmarks[8]['x'];
-    double y = landmarks[8]['y'];
+    await _voiceRecorder.stopRecorder();
+    await _voiceRecorder.closeRecorder();
 
-    // 손이 특정 영역(객체)에 가까이 있는지 확인
-    if (_isNearObject(x, y)) {
-      _captureAndAnalyze();
+    _isRecording = false;
+    animations.recordRotationController.stop();
+    _timer?.cancel();
+
+    final directory = await getApplicationDocumentsDirectory();
+    final path = '${directory.path}/friend_audio.wav';
+
+    final transcript = await _googleSTT.transcribeAudio(path);
+
+    setState(() {
+      _geminiResponse = transcript!;
+    });
+
+    if (transcript == null || transcript.isEmpty) {
+      _retryCount++;
+
+      if (_retryCount == 1) {
+        setState(() {
+          _geminiResponse = "";
+        });
+        _initializePorcupine(); // Retry listening
+      }
+    } else {
+      _retryCount = 0; // Reset retry count on success
+
+      try {
+        if (transcript.contains("What can you see") || transcript.contains("see")) {
+          setState(() {
+            animations.recordRotationController.stop();
+          });
+          await _analyzeCameraFeed();
+          
+          
+        } else {
+          final response = await _geminiApi.generateContent(transcript);
+          setState(() {
+            _geminiResponse = response!;
+            animations.recordRotationController.stop(); // Stop rotation after response
+          });
+
+          await _googleTTS.speak(response!, onComplete: _startListening); // Start listening again after TTS
+          
+        }
+      } catch (e) {
+        setState(() {
+          print('Error: ${e.toString()}');
+          _geminiResponse = 'Sorry, could you say again?';
+          _startListening();
+        });
+      }
+    }
+  }
+  
+
+  Future<void> _analyzeCameraFeed() async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized || _isProcessing) {
+      return;
     }
 
     setState(() {
-      _handData = "Hand at (${x.toStringAsFixed(2)}, ${y.toStringAsFixed(2)})";
+      _isProcessing = true;
     });
-  }
-
-  bool _isNearObject(double x, double y) {
-    // 객체의 좌표와 비교하여 손이 가까이 있는지 판단하는 로직
-    return (x > 0.4 && x < 0.6 && y > 0.4 && y < 0.6);
-  }
-
-  // 이 메서드가 추가된 부분입니다.
-  Future<void> _captureAndAnalyze() async {
-    if (_cameraController == null || !_cameraController!.value.isInitialized) {
-      return;
-    }
 
     try {
-      // 카메라 이미지 캡처
       final image = await _cameraController!.takePicture();
       final imageBytes = await image.readAsBytes();
 
-      // Vision API로 이미지 분석
-      final labels = await VisionApi.detectLabelsFromMemory(imageBytes);
+      final description = await GeminiApi().generateDescriptionFromImage(imageBytes);
 
-      // Gemini API로 분석 결과를 기반으로 안내 생성
-      final guidance = await GeminiApi().generateContent('The environment contains: $labels. What should the user do?');
-
-      // 생성된 안내를 음성으로 제공 (Google TTS 사용)
-      await GoogleTTS().speak(guidance ?? 'Unable to provide guidance.');
-    } catch (e) {
-      print('Error during camera feed analysis: $e');
-    }
-  }
-
-  Future<void> _analyzeCameraFeed() async {
-    if (_cameraController == null || !_cameraController!.value.isInitialized) {
-      return;
-    }
-
-    try {
-      // 이미지 캡처
-      final image = await _cameraController!.takePicture();
-      final imageBytes = await image.readAsBytes();
-
-      // Vision API로 이미지 분석
-      final labels = await VisionApi.detectLabelsFromMemory(imageBytes);
-
-      // Gemini API로 분석 결과를 기반으로 안내 생성
-      final guidance = await GeminiApi().generateContent('The environment contains: $labels. What should the user do?');
-
-      // 생성된 안내를 음성으로 제공 (Google TTS 사용)
-      await GoogleTTS().speak(guidance ?? 'Unable to provide guidance.');
-    } catch (e) {
-      print('Error during camera feed analysis: $e');
-    }
-  }
-
-  Future<void> _getLocationAndMapUrl() async {
-    try {
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          _showLocationPermissionDialog();
-          return;
-        }
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        _showLocationPermissionDialog();
-        return;
-      }
-
-      // 현재 위치를 가져와서 지도 URL을 업데이트합니다.
-      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
       setState(() {
-        mapUrl = MapApiService().getMapImageUrl(position.latitude, position.longitude, 0); // 정적 지도이므로 heading(방향)을 0으로 설정
+        _geminiResponse = description ?? 'I’m here to chat whenever you need a smile!';
       });
-    } catch (e) {
-      print('Error fetching location: $e');
-    }
-  }
 
-  void _showLocationPermissionDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Location Permission Required'),
-        content: const Text('This app requires location access to display the map. Please grant location permission in the app settings.'),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-            },
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              openAppSettings(); // 이 옵션을 통해 사용자에게 앱 설정을 열고 권한을 부여하도록 합니다.
-              Navigator.pop(context);
-            },
-            child: const Text('Open Settings'),
-          ),
-        ],
-      ),
-    );
+      await GoogleTTS().speak(_geminiResponse, onComplete: _startListening);
+    } catch (e) {
+      print('Error during camera feed analysis: $e');
+    } finally {
+      setState(() {
+        _isProcessing = false;
+      });
+    }
   }
 
   Future<void> _initializeCamera() async {
@@ -213,10 +244,6 @@ class _UiSystemtState extends State<UiSystem> with TickerProviderStateMixin {
 
       setState(() {
         _isCameraInitialized = true;
-      });
-
-      Future.delayed(const Duration(seconds: 1), () {
-        animations.animationController.forward();
       });
     } catch (e) {
       print('Error initializing camera: $e');
@@ -314,26 +341,64 @@ class _UiSystemtState extends State<UiSystem> with TickerProviderStateMixin {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Image.asset(
-                      'assets/google-gemini-icon.png', 
-                      width: 50,
-                      height: 50,
+                    RotationTransition(
+                      turns: animations.recordRotationController,
+                      child: Image.asset(
+                        'assets/google-gemini-icon.png',
+                        width: 50,
+                        height: 50,
+                      ),
                     ),
-                    const SizedBox(width: 10), 
+                    const SizedBox(width: 10),
                     SlideTransition(
                       position: animations.labelSlideAnimation,
                       child: Padding(
                         padding: const EdgeInsets.only(left: 16.0),
-                        child: Container(
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 300),
                           width: MediaQuery.of(context).size.width * 0.7,
-                          height: 50,
+                          padding: const EdgeInsets.all(12.0),
+                          constraints: BoxConstraints(
+                            minHeight: 50.0, // Ensure minimum height
+                            maxHeight: MediaQuery.of(context).size.height * 0.3, // Ensure maximum height
+                          ),
                           decoration: BoxDecoration(
                             gradient: const LinearGradient(
-                              colors: [Colors.blue, Colors.purple], 
+                              colors: [Colors.blue, Colors.purple],
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
                             ),
-                            borderRadius: BorderRadius.circular(25), 
+                            borderRadius: BorderRadius.circular(25),
+                          ),
+                          child: SingleChildScrollView(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    _geminiResponse,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16.0,
+                                    ),
+                                    overflow: TextOverflow.visible,
+                                    maxLines: null,
+                                  ),
+                                ),
+                                if (_isListening) // 녹음 중일 때 타이머 표시
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 8.0), // 타이머와 텍스트 사이의 간격
+                                    child: Text(
+                                      '$_remainingTime',
+                                      style: const TextStyle(
+                                        color: Color.fromARGB(255, 255, 255, 255),
+                                        fontSize: 18.0,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
@@ -367,31 +432,26 @@ class _UiSystemtState extends State<UiSystem> with TickerProviderStateMixin {
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Container(
-                  width: 200,  // 원하는 크기로 조정
-                  height: 200,  // 원하는 크기로 조정
+                  width: 200,
+                  height: 200,
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(20),
-                    child: FutureBuilder<String>(
-                      future: mapUrl,
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState == ConnectionState.waiting) {
-                          return const Center(child: CircularProgressIndicator());
-                        } else if (snapshot.hasError) {
-                          print('Map loading error: ${snapshot.error}');
-                          return const Center(child: Text('Error loading map'));
-                        } else if (snapshot.hasData && snapshot.data != null) {
-                          return Image.network(
-                            snapshot.data!,
-                            fit: BoxFit.cover,
-                          );
-                        } else {
-                          return const Center(child: Text('No map data available'));
-                        }
-                      },
+                  child: const Padding(
+                    padding: EdgeInsets.all(16.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(height: 10),
+                        SizedBox(height: 10),
+                        Text(
+                          '• Say "Hi Gemini" to start a conversation.\n'
+                          '• Ask "What can you see?" to know more about your surroundings.',
+                          style: TextStyle(color: Colors.black, fontSize: 14),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -412,5 +472,8 @@ class _UiSystemtState extends State<UiSystem> with TickerProviderStateMixin {
     _cameraController?.dispose();
     animations.dispose();
     super.dispose();
+    _voiceRecorder.closeRecorder();
+    _porcupineService?.stop();
+    _timer?.cancel(); // 타이머 종료
   }
 }

@@ -83,10 +83,12 @@ flutter:
     # - assets/intromusic.mp3
     - assets/Google_Gemini_logo.svg.png
     - assets/google-gemini-icon.png
+    - assets/intromusic.mp3
     - .env
     - assets/keywords/hi-gemini_en_android_v3_0_0.ppn
+    - assets/otherkeyword/Hi-Gemini_en_android_v3_0_0.ppn
     
-    - assets/yamnet_model.tflite
+
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
