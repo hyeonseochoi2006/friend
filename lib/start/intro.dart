@@ -88,7 +88,7 @@ class _IntroSystemState extends State<IntroSystem> with SingleTickerProviderStat
     await _showTextAndSpeak("My name is Gemini", 3);
     await _showTextAndSpeak("I want to be your friend!", 3);
   
-    await _showTextAndSpeak("If you don't mind, please answer yes.", 2);
+    await _showTextAndSpeak("If you don't mind, please answer Yes.", 2);
     bool recordingStarted = await _startRecording();
     if (!recordingStarted) {
       await _showTextAndSpeak("Recording failed. Please try again.", 3);

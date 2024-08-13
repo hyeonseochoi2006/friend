@@ -5,6 +5,7 @@ import 'package:friend/servers/vision_api.dart';
 class CameraService {
   CameraController? _controller;
   bool _isDetecting = false;
+  
 
   CameraController? get controller => _controller;
 

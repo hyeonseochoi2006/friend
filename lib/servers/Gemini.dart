@@ -34,7 +34,7 @@ class GeminiApi {
   Future<String?> generateDescriptionFromImage(Uint8List imageBytes) async {
     try {
       final labels = await VisionApi.detectLabelsFromMemory(imageBytes);
-      final prompt = 'The image contains the following objects: $labels. Based on this, provide a single, free-form comment or thought.';
+      final prompt = 'You can see: $labels. Describe what you see as if you were looking at it right now, with a natural and casual comment.';
       return await generateContent(prompt);
     } catch (e) {
       throw Exception('Failed to generate description: $e');

@@ -17,6 +17,8 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:friend/servers/speech_to_Text.dart'; 
 import 'package:flutter_sound/flutter_sound.dart';
+import 'package:friend/servers/friendserver.dart';
+
 
 class UiSystem extends StatefulWidget {
   const UiSystem({super.key});
@@ -38,6 +40,7 @@ class _UiSystemtState extends State<UiSystem> with TickerProviderStateMixin {
   bool _isRecording = false;
   bool _isPorcupineActive = true;
   int _remainingTime = 10; // 타이머를 위한 변수 추가
+  
 
   String _handData = "No hand detected";
   String _geminiResponse = "";
@@ -50,7 +53,7 @@ class _UiSystemtState extends State<UiSystem> with TickerProviderStateMixin {
   final _googleSTT = GoogleSTT();
   final _geminiApi = GeminiApi();
   final _googleTTS = GoogleTTS();
-
+  final FriendServer _friendServer = FriendServer(); 
   @override
   void initState() {
     super.initState();
@@ -93,10 +96,35 @@ class _UiSystemtState extends State<UiSystem> with TickerProviderStateMixin {
 }
 
 // 타이머 제거
-void _startWakeWordTimer() {
-  _wakeWordTimer?.cancel(); // 기존 타이머가 있을 경우 취소
-  // 더 이상 타이머를 사용하지 않으므로 빈 메서드로 유지
-}
+
+ Future<void> _analyzeCameraFeed() async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized || _isProcessing) {
+      return;
+    }
+
+    setState(() {
+      _isProcessing = true;
+    });
+
+    try {
+      final image = await _cameraController!.takePicture();
+      final imageBytes = await image.readAsBytes();
+
+      final description = await GeminiApi().generateDescriptionFromImage(imageBytes);
+
+      setState(() {
+        _geminiResponse = description ?? 'I’m here to chat whenever you need a smile!';
+      });
+
+      await GoogleTTS().speak(_geminiResponse, onComplete: _startListening);
+    } catch (e) {
+      print('Error during camera feed analysis: $e');
+    } finally {
+      setState(() {
+        _isProcessing = false;
+      });
+    }
+  }
 
   Future<void> _startListening() async {
     if (_voiceRecorder.isRecording) {
@@ -122,15 +150,16 @@ void _startWakeWordTimer() {
     _isRecording = true;
 
     // Stop recording after 10 seconds and start processing
-    await Future.delayed(const Duration(seconds: 10));
+    await Future.delayed(const Duration(seconds: 4));
     await stopRecording();
   }
 
   void _startCountdown() {
     _timer?.cancel();
     setState(() {
-      _remainingTime = 10; // 타이머 초기화
+      _remainingTime = 4; // 타이머 초기화
     });
+
 
     _timer = Timer.periodic(Duration(seconds: 1), (timer) {
       setState(() {
@@ -174,63 +203,45 @@ void _startWakeWordTimer() {
     } else {
       _retryCount = 0; // Reset retry count on success
 
-      try {
-        if (transcript.contains("What can you see") || transcript.contains("see")) {
-          setState(() {
-            animations.recordRotationController.stop();
-          });
-          await _analyzeCameraFeed();
-          
-          
-        } else {
-          final response = await _geminiApi.generateContent(transcript);
-          setState(() {
-            _geminiResponse = response!;
-            animations.recordRotationController.stop(); // Stop rotation after response
-          });
-
-          await _googleTTS.speak(response!, onComplete: _startListening); // Start listening again after TTS
-          
-        }
-      } catch (e) {
-        setState(() {
-          print('Error: ${e.toString()}');
-          _geminiResponse = 'Sorry, could you say again?';
-          _startListening();
-        });
-      }
-    }
-  }
+  try {
+  // Handle the response using FriendServer
+  String? response = await _friendServer.handleResponse(transcript, _startListening);
   
-
-  Future<void> _analyzeCameraFeed() async {
-    if (_cameraController == null || !_cameraController!.value.isInitialized || _isProcessing) {
-      return;
-    }
-
+  // If the response was handled by FriendServer, update _geminiResponse
+  if (response != null) {
     setState(() {
-      _isProcessing = true;
+      _geminiResponse = response!;
+      animations.recordRotationController.stop(); // Stop rotation after response
     });
-
-    try {
-      final image = await _cameraController!.takePicture();
-      final imageBytes = await image.readAsBytes();
-
-      final description = await GeminiApi().generateDescriptionFromImage(imageBytes);
-
+  } else {
+    // If FriendServer didn't handle the response, proceed to the Gemini API
+    if (transcript.contains("What can you see") || transcript.contains("see")) {
       setState(() {
-        _geminiResponse = description ?? 'I’m here to chat whenever you need a smile!';
+        animations.recordRotationController.stop();
+      });
+      await _analyzeCameraFeed();
+    } else {
+      response = await _geminiApi.generateContent(transcript);
+      setState(() {
+        _geminiResponse = response!;
+        animations.recordRotationController.stop(); // Stop rotation after response
       });
 
-      await GoogleTTS().speak(_geminiResponse, onComplete: _startListening);
-    } catch (e) {
-      print('Error during camera feed analysis: $e');
-    } finally {
-      setState(() {
-        _isProcessing = false;
-      });
+      // Use Google TTS to speak the generated content
+      await _googleTTS.speak(response!, onComplete: _startListening); 
     }
   }
+} catch (e) {
+  setState(() {
+    print('Error: ${e.toString()}');
+    _geminiResponse = 'Sorry, could you say that again?';
+    _startListening();
+  });
+}
+    }
+  }
+
+
 
   Future<void> _initializeCamera() async {
     try {
