@@ -54,7 +54,7 @@ class _IntroSystemState extends State<IntroSystem> with SingleTickerProviderStat
 
   @override
   void dispose() {
-    _backgroundMusicPlayer.stop();
+     _backgroundMusicPlayer.stop();
     _audioPlayer.stop();
     _recorder.closeRecorder();
     _textfinalsound.dispose();
@@ -78,7 +78,7 @@ class _IntroSystemState extends State<IntroSystem> with SingleTickerProviderStat
   }
   Future<void> _playBackgroundMusic() async {
     await _backgroundMusicPlayer.setReleaseMode(ReleaseMode.loop);
-    // await _backgroundMusicPlayer.setVolume(0.2);
+    await _backgroundMusicPlayer.setVolume(0.2);
     await _backgroundMusicPlayer.play(AssetSource('intromusic.mp3'));
   }
   
@@ -156,7 +156,7 @@ class _IntroSystemState extends State<IntroSystem> with SingleTickerProviderStat
     _opacity = 1.0;
   });
   try {
-    await _googleTTS.speak(text, onComplete: onComplete); 
+    await _googleTTS.speak(text, onComplete: onComplete); // onComplete 콜백 추가
   } catch (e) {
     print("TTS failed: $e");
   }
