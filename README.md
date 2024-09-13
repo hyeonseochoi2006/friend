@@ -2,9 +2,7 @@
 https://youtu.be/95L3jGYrv9w
 
 
-# friend
-
-A new Flutter project.
+# 데모에 참여한 앱
 
 ## Getting Started
 
